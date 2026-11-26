@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
 
 const args = process.argv.slice(2);
-const file = args.find((a) => !a.startsWith('--'));
+const file = args.find((a, i) => !a.startsWith('--') && !args[i - 1]?.startsWith('--'));
 const flag = (name: string) => {
   const i = args.indexOf(`--${name}`);
   return i >= 0 ? args[i + 1] : undefined;

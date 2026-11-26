@@ -1,0 +1,20 @@
+# Render Blueprint: one free Docker web service. Postgres comes from Neon (free) via DATABASE_URL.
+services:
+  - type: web
+    name: procucev-stt
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL
+        value: "true"
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-3.5-transcribe-live
+      # Optional: wss:// URL of a deployed whisper sidecar (e.g. a Hugging Face Docker Space).
+      - key: WHISPER_URL
+        sync: false
