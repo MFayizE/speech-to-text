@@ -593,6 +593,11 @@ textarea:focus-visible {
   line-height: 20px;
 }
 
+.notice {
+  background: var(--raised);
+  color: var(--text-2);
+}
+
 .notice.is-error {
   background: color-mix(in srgb, var(--neg) 9%, transparent);
   border: 1px solid color-mix(in srgb, var(--neg) 28%, transparent);

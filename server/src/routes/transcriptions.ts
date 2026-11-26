@@ -10,9 +10,16 @@ const listSchema = z.object({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+/** Trims and drops NUL characters before length checks, so "\u0000" alone counts as empty. */
+const text = () =>
+  z
+    .string()
+    .transform((s) => s.replace(/\u0000/g, '').trim())
+    .pipe(z.string().min(1, 'text is required').max(50_000));
+
 const createSchema = z.object({
   title: z.string().trim().max(200).optional(),
-  text: z.string().trim().min(1, 'text is required').max(50_000),
+  text: text(),
   language: z.string().trim().max(32).nullish(),
   provider: z.string().trim().max(32).optional(),
   durationMs: z.number().int().min(0).nullish(),
@@ -21,7 +28,7 @@ const createSchema = z.object({
 const updateSchema = z
   .object({
     title: z.string().trim().max(200),
-    text: z.string().trim().min(1).max(50_000),
+    text: text(),
     language: z.string().trim().max(32).nullable(),
   })
   .partial()

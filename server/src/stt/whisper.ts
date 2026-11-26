@@ -39,12 +39,14 @@ export class WhisperProvider implements SttProvider {
       else if (msg.type === 'error') handlers.onError(new Error(msg.message ?? 'whisper error'));
       else if (msg.type === 'done') done?.();
     });
+    let closing = false;
     ws.on('close', () => {
+      if (!closed && !closing) handlers.onError(new Error('Whisper service disconnected'), true);
       closed = true;
       done?.();
     });
     ws.on('error', (err) => {
-      if (!closed) handlers.onError(err);
+      if (!closed && !closing) handlers.onError(new Error(`Whisper service error: ${err.message}`), true);
     });
 
     // Whisper takes ISO 639-1 codes ("hi"), so "hi-IN" becomes "hi". Several hints means auto-detect.
@@ -65,6 +67,7 @@ export class WhisperProvider implements SttProvider {
       },
       close() {
         if (closed) return;
+        closing = true;
         closed = true;
         ws.close();
       },

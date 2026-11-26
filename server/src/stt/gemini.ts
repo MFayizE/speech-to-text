@@ -49,13 +49,13 @@ export class GeminiLiveProvider implements SttProvider {
           if (content.turnComplete || content.generationComplete) turnDone?.();
         },
         onerror: (e: ErrorEvent) => {
-          if (!closed) handlers.onError(new Error(`Gemini Live error: ${e.message ?? 'unknown'}`));
+          if (!closed) handlers.onError(new Error(`Gemini Live error: ${e.message ?? 'unknown'}`), true);
         },
         onclose: (e: CloseEvent) => {
           turnDone?.();
           // 1000 is a normal close. Anything else (bad key, quota, 10 min limit) is worth surfacing.
           if (!closed && e.code !== 1000) {
-            handlers.onError(new Error(`Gemini Live closed (${e.code}): ${e.reason || 'no reason given'}`));
+            handlers.onError(new Error(`Gemini Live closed (${e.code}): ${e.reason || 'no reason given'}`), true);
           }
           closed = true;
         },

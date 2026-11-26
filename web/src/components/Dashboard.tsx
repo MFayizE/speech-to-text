@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, LoaderCircle, Mic, Pause, Pencil, Play, Plus, Search, Trash2, X } from 'lucide-react';
-import { api, type Page, type Transcription } from '../api';
+import { api, ApiError, type Page, type Transcription } from '../api';
+
+const isGone = (err: unknown) => err instanceof ApiError && err.status === 404;
 import { clock, count, engineName, fullDate, languageName, when } from '../format';
 import { canSpeak, speak, stopSpeaking } from '../tts';
 
@@ -46,10 +48,24 @@ export function Dashboard() {
 
   useEffect(() => () => stopSpeaking(), []);
 
+  // Rows deleted elsewhere can leave us past the last page; step back.
+  useEffect(() => {
+    if (page && page.items.length === 0 && page.total > 0 && offset > 0) {
+      setOffset(Math.max(0, Math.floor((page.total - 1) / PAGE_SIZE) * PAGE_SIZE));
+    }
+  }, [page, offset]);
+
   async function remove(t: Transcription) {
     try {
-      await api.remove(t.id);
+      // Already deleted (another tab) counts as done.
+      await api.remove(t.id).catch((err) => {
+        if (!isGone(err)) throw err;
+      });
       setConfirmId(null);
+      if (speakingId === t.id) {
+        stopSpeaking();
+        setSpeakingId(null);
+      }
       // Step back a page if this was the last row on it.
       if (page && page.items.length === 1 && offset > 0) setOffset(offset - PAGE_SIZE);
       else await load();
@@ -170,7 +186,12 @@ export function Dashboard() {
                   submitLabel="Save changes"
                   onCancel={() => setEditingId(null)}
                   onSubmit={async (data) => {
-                    await api.update(t.id, data);
+                    try {
+                      await api.update(t.id, data);
+                    } catch (err) {
+                      if (!isGone(err)) throw err;
+                      setError('That entry no longer exists. It may have been deleted in another tab');
+                    }
                     setEditingId(null);
                     await load();
                   }}
@@ -315,7 +336,7 @@ function Editor({ initial, submitLabel, onSubmit, onCancel }: EditorProps) {
         try {
           await onSubmit({ title: title.trim(), text: text.trim() });
         } catch (err) {
-          setError(`${(err as Error).message}. Fix it and save again.`);
+          setError(`Not saved: ${(err as Error).message}. Your edits are still here, so try again.`);
           setSaving(false);
         }
       }}

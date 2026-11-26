@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { WebSocketServer } from 'ws';
 import { ZodError } from 'zod';
-import { handleLiveConnection } from './live.js';
+import { handleLiveConnection, type LiveOptions } from './live.js';
 import type { TranscriptionRepository } from './repository.js';
 import { transcriptionsRouter } from './routes/transcriptions.js';
 import type { ProviderRegistry } from './stt/registry.js';
@@ -13,9 +13,10 @@ export interface AppDeps {
   repo: TranscriptionRepository;
   registry: ProviderRegistry;
   webDist?: string;
+  live?: Partial<LiveOptions>;
 }
 
-export function buildServer({ repo, registry, webDist }: AppDeps): Server {
+export function buildServer({ repo, registry, webDist, live }: AppDeps): Server {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '256kb' }));
@@ -49,13 +50,19 @@ export function buildServer({ repo, registry, webDist }: AppDeps): Server {
       res.status(400).json({ error: 'Malformed JSON body' });
       return;
     }
+    // body-parser errors carry a 4xx status (413 too large, 415 bad charset, ...).
+    const status = (err as { status?: number })?.status;
+    if (typeof status === 'number' && status >= 400 && status < 500) {
+      res.status(status).json({ error: status === 413 ? 'Request body too large (limit 256 KB)' : 'Bad request' });
+      return;
+    }
     console.error(err);
     res.status(500).json({ error: 'Internal server error' });
   });
 
   const server = createServer(app);
   const wss = new WebSocketServer({ server, path: '/ws/transcribe', maxPayload: 1024 * 1024 });
-  wss.on('connection', (ws, req) => handleLiveConnection(ws, req, { repo, registry }));
+  wss.on('connection', (ws, req) => handleLiveConnection(ws, req, { repo, registry, options: live }));
   server.on('close', () => wss.close());
   return server;
 }

@@ -121,3 +121,69 @@ describe('REST /api/transcriptions', () => {
     expect(cfg.body).toEqual({ providers: [], defaultProvider: null });
   });
 });
+
+describe('REST edge cases', () => {
+  it('treats % and _ in search as literal characters', async () => {
+    await create({ text: 'discount 50% approved' });
+    await create({ text: 'file_name.pdf attached' });
+    await create({ text: 'plain text' });
+    const pct = await request(server).get('/api/transcriptions').query({ q: '%' });
+    expect(pct.body.items.map((t: { text: string }) => t.text)).toEqual(['discount 50% approved']);
+    const und = await request(server).get('/api/transcriptions').query({ q: '_' });
+    expect(und.body.items.map((t: { text: string }) => t.text)).toEqual(['file_name.pdf attached']);
+  });
+
+  it('searches Devanagari and romanized Hindi', async () => {
+    await create({ text: 'मुझे kal tak report chahiye' });
+    expect((await request(server).get('/api/transcriptions').query({ q: 'मुझे' })).body.total).toBe(1);
+    expect((await request(server).get('/api/transcriptions').query({ q: 'CHAHIYE' })).body.total).toBe(1);
+  });
+
+  it('returns an empty page past the end', async () => {
+    await create({ text: 'only one' });
+    const res = await request(server).get('/api/transcriptions?offset=50');
+    expect(res.body).toMatchObject({ items: [], total: 1 });
+  });
+
+  it('rejects ids outside the safe range and non-integers', async () => {
+    for (const id of ['0', '-1', '1.5', '100000000000000000000']) {
+      expect((await request(server).get(`/api/transcriptions/${id}`)).status, id).toBe(400);
+    }
+  });
+
+  it('returns 413 for an oversized body instead of 500', async () => {
+    const res = await create({ text: 'a'.repeat(300_000) });
+    expect(res.status).toBe(413);
+    expect(res.body.error).toContain('too large');
+  });
+
+  it('rejects text over 50,000 characters', async () => {
+    expect((await create({ text: 'a'.repeat(50_001) })).status).toBe(400);
+    expect((await create({ text: 'a'.repeat(50_000) })).status).toBe(201);
+  });
+
+  it('strips NUL characters instead of failing, and rejects NUL-only text', async () => {
+    const res = await create({ text: 'a\u0000b' });
+    expect(res.status).toBe(201);
+    expect(res.body.text).toBe('ab');
+    expect((await create({ text: '\u0000 ' })).status).toBe(400);
+  });
+
+  it('regenerates the title when it is cleared', async () => {
+    const { body } = await create({ title: 'Custom', text: 'quarterly vendor review notes' });
+    const res = await request(server).patch(`/api/transcriptions/${body.id}`).send({ title: '  ' });
+    expect(res.body.title).toBe('quarterly vendor review notes');
+  });
+
+  it('rejects wrong body shapes and types', async () => {
+    expect((await create([1] as unknown as object)).status).toBe(400);
+    expect((await create({ text: 42 })).status).toBe(400);
+    expect((await request(server).post('/api/transcriptions').set('Content-Type', 'text/plain').send('hello')).status).toBe(400);
+  });
+
+  it('stores markup as plain text', async () => {
+    const xss = '<img src=x onerror=alert(1)>';
+    const res = await create({ text: xss });
+    expect(res.body.text).toBe(xss);
+  });
+});

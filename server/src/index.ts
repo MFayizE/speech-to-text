@@ -22,6 +22,7 @@ async function main() {
     repo: new TranscriptionRepository(pool),
     registry,
     webDist: config.webDist || path.resolve(here, '../../web/dist'),
+    live: { maxSessionMs: config.maxSessionMs, startTimeoutMs: config.startTimeoutMs },
   });
 
   server.listen(config.port, () => {

@@ -16,6 +16,10 @@ export const config = {
   defaultProvider: process.env.STT_PROVIDER ?? '',
   /** How long to wait for the provider to flush its last transcript after the user stops. */
   finalizeTimeoutMs: num(process.env.FINALIZE_TIMEOUT_MS, 4000),
+  /** Gemini live transcription sessions are capped at 10 minutes; stop and save a little before that. */
+  maxSessionMs: num(process.env.MAX_SESSION_MS, 9.5 * 60 * 1000),
+  /** Give up if the engine has not accepted the session within this time. */
+  startTimeoutMs: num(process.env.START_TIMEOUT_MS, 10_000),
   /** Folder with the built React app. Served as static files when present. */
   webDist: process.env.WEB_DIST ?? '',
 };

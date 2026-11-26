@@ -46,6 +46,7 @@ export function LiveTranscriber({ config, onSaved }: Props) {
   const [finals, setFinals] = useState<string[]>([]);
   const [partial, setPartial] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [saved, setSaved] = useState<Transcription | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const [speaking, setSpeaking] = useState(false);
@@ -93,6 +94,7 @@ export function LiveTranscriber({ config, onSaved }: Props) {
     stopSpeaking();
     setSpeaking(false);
     setError('');
+    setNotice('');
     setSaved(null);
     setFinals([]);
     setPartial('');
@@ -105,9 +107,23 @@ export function LiveTranscriber({ config, onSaved }: Props) {
     // Audio captured before the engine is ready is queued, so the first words are not lost.
     const queue: ArrayBuffer[] = [];
     let ready = false;
+    let opened = false;
+    let ended = false; // server sent saved/empty, or we gave up
+    const current = () => wsRef.current === ws;
+    const showError = (message: string) => setError((prev) => prev || message);
+
+    ws.onopen = () => {
+      opened = true;
+    };
 
     ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data as string);
+      if (!current()) return;
+      let msg: { type: string; [key: string]: any };
+      try {
+        msg = JSON.parse(event.data as string);
+      } catch {
+        return;
+      }
       switch (msg.type) {
         case 'ready':
           ready = true;
@@ -123,38 +139,60 @@ export function LiveTranscriber({ config, onSaved }: Props) {
           setPartial('');
           break;
         case 'saved':
+          ended = true;
           setSaved(msg.transcription);
           onSaved(msg.transcription);
           finish();
           break;
         case 'empty':
-          setError('No speech was detected. Check that the right microphone is selected, then try again.');
+          ended = true;
+          showError('No speech was detected. Check that the right microphone is selected, then try again.');
           finish();
           break;
+        case 'notice':
+          setNotice(msg.message);
+          break;
         case 'error':
-          setError(msg.message);
+          showError(msg.message);
           if (!ready) finish();
+          // The engine is gone; the server is saving what it has. Stop the mic and wait for "saved".
+          else if (msg.fatal) void releaseMic('finishing');
           break;
       }
     };
     ws.onclose = () => {
-      if (wsRef.current === ws) finish();
+      if (!current()) return;
+      if (!opened) showError('Cannot reach the server. Check that it is running and your network is up, then try again.');
+      else if (!ended && ready) showError('The connection to the server dropped. Text already finalized was saved to History if the server is still up.');
+      finish();
     };
-    ws.onerror = () => setError('Lost the connection to the server. Check your network, then start again.');
 
+    let mic: MicRecorder;
     try {
-      micRef.current = await startMic(
+      mic = await startMic(
         (pcm) => {
           if (ready && ws.readyState === WebSocket.OPEN) ws.send(pcm);
-          else queue.push(pcm);
+          else if (ws.readyState <= WebSocket.OPEN) queue.push(pcm);
         },
         (rms) => meterRef.current?.push(Math.min(1, rms * 6)),
+        () => {
+          showError('The microphone stopped (unplugged or taken by another app). What was captured is being saved.');
+          void stop();
+        },
       );
     } catch (err) {
-      setError(micErrorMessage(err));
-      finish();
+      if (current()) {
+        setError(micErrorMessage(err));
+        finish();
+      }
       return;
     }
+    // The connection may have failed while the permission prompt was open: do not leave the mic on.
+    if (!current()) {
+      void mic.stop();
+      return;
+    }
+    micRef.current = mic;
 
     const codes = LANGUAGES[languageIndex].codes;
     const sendStart = () => ws.send(JSON.stringify({ type: 'start', provider: provider || undefined, languageCodes: codes }));
@@ -162,14 +200,29 @@ export function LiveTranscriber({ config, onSaved }: Props) {
     else ws.addEventListener('open', sendStart, { once: true });
   }
 
-  async function stop() {
-    setStatus('finishing');
-    await micRef.current?.stop();
+  async function releaseMic(next: Status) {
+    setStatus(next);
+    const mic = micRef.current;
     micRef.current = null;
     meterRef.current?.reset();
+    await mic?.stop();
+  }
+
+  async function stop() {
     const ws = wsRef.current;
-    if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }));
-    else finish();
+    await releaseMic('finishing');
+    if (ws?.readyState !== WebSocket.OPEN) {
+      finish();
+      return;
+    }
+    ws.send(JSON.stringify({ type: 'stop' }));
+    // Never leave the UI stuck on "Saving" if the server goes quiet.
+    setTimeout(() => {
+      if (wsRef.current === ws) {
+        setError((prev) => prev || 'The server did not confirm the save. Check History, then try again if it is missing.');
+        finish();
+      }
+    }, 20_000);
   }
 
   async function copy(text: string) {
@@ -230,6 +283,11 @@ export function LiveTranscriber({ config, onSaved }: Props) {
           {error && (
             <div className="notice is-error" role="alert">
               {error}
+            </div>
+          )}
+          {notice && (
+            <div className="notice" role="status">
+              {notice}
             </div>
           )}
 

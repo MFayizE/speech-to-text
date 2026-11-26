@@ -9,7 +9,11 @@ export interface SttHandlers {
   onPartial(text: string): void;
   /** Finalized text for one utterance. Append to the transcript. */
   onFinal(text: string): void;
-  onError(err: Error): void;
+  /**
+   * fatal = the engine connection is gone (bad key, quota, network, crash), so no more text will arrive.
+   * Non-fatal errors (one failed chunk) leave the session running.
+   */
+  onError(err: Error, fatal?: boolean): void;
 }
 
 export interface SttStartOptions {

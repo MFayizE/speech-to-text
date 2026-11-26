@@ -21,16 +21,30 @@ export interface AppConfig {
   defaultProvider: string | null;
 }
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
 async function http<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      headers: init?.body ? { 'Content-Type': 'application/json' } : undefined,
+    });
+  } catch {
+    throw new ApiError('Cannot reach the server. Check your connection', 0);
+  }
   if (res.status === 204) return undefined as T;
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = body.issues?.map((i: { path: string; message: string }) => `${i.path}: ${i.message}`).join(', ');
-    throw new Error(detail || body.error || `Request failed (${res.status})`);
+    throw new ApiError(detail || body.error || `Request failed (${res.status})`, res.status);
   }
   return body as T;
 }

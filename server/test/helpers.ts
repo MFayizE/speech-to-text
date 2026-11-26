@@ -3,6 +3,7 @@ import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { buildServer } from '../src/app.js';
 import { migrate } from '../src/db.js';
+import type { LiveOptions } from '../src/live.js';
 import { TranscriptionRepository } from '../src/repository.js';
 import { ProviderRegistry } from '../src/stt/registry.js';
 import type { SttHandlers, SttProvider, SttSession, SttStartOptions } from '../src/stt/types.js';
@@ -61,8 +62,8 @@ export class MockProvider implements SttProvider {
   }
 }
 
-export async function startTestServer(pool: pg.Pool, providers: SttProvider[] = []) {
-  const server: Server = buildServer({ repo: new TranscriptionRepository(pool), registry: new ProviderRegistry(providers) });
+export async function startTestServer(pool: pg.Pool, providers: SttProvider[] = [], live?: Partial<LiveOptions>) {
+  const server: Server = buildServer({ repo: new TranscriptionRepository(pool), registry: new ProviderRegistry(providers), live });
   await new Promise<void>((resolve) => server.listen(0, resolve));
   const { port } = server.address() as AddressInfo;
   return {

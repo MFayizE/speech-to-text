@@ -53,6 +53,16 @@ function toModel(row: Row): Transcription {
   };
 }
 
+/** Postgres TEXT cannot store NUL; strip it (and surrounding whitespace) before writing. */
+export function clean(value: string): string {
+  return value.replace(/\u0000/g, '').trim();
+}
+
+/** Escapes LIKE wildcards so a search for "%" or "_" matches those characters literally. */
+export function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&');
+}
+
 /** Builds a short default title from the first words of the transcript. */
 export function defaultTitle(text: string): string {
   const words = text.trim().split(/\s+/).slice(0, 8).join(' ');
@@ -67,8 +77,8 @@ export class TranscriptionRepository {
     const params: unknown[] = [];
     let where = '';
     if (q) {
-      params.push(`%${q}%`);
-      where = 'WHERE title ILIKE $1 OR text ILIKE $1';
+      params.push(`%${escapeLike(q)}%`);
+      where = "WHERE title ILIKE $1 ESCAPE '\\' OR text ILIKE $1 ESCAPE '\\'";
     }
     const total = await this.pool.query<{ count: string }>(`SELECT count(*) FROM transcriptions ${where}`, params);
     const rows = await this.pool.query<Row>(
@@ -86,12 +96,13 @@ export class TranscriptionRepository {
   }
 
   async create(input: NewTranscription): Promise<Transcription> {
+    const text = clean(input.text);
     const res = await this.pool.query<Row>(
       `INSERT INTO transcriptions (title, text, language, provider, duration_ms)
        VALUES ($1, $2, $3, $4, $5) RETURNING ${COLUMNS}`,
       [
-        input.title?.trim() || defaultTitle(input.text),
-        input.text,
+        clean(input.title ?? '') || defaultTitle(text),
+        text,
         input.language ?? null,
         input.provider ?? 'manual',
         input.durationMs ?? null,
@@ -100,7 +111,18 @@ export class TranscriptionRepository {
     return toModel(res.rows[0]);
   }
 
-  async update(id: number, patch: TranscriptionPatch): Promise<Transcription | null> {
+  async update(id: number, input: TranscriptionPatch): Promise<Transcription | null> {
+    const patch: TranscriptionPatch = { ...input };
+    if (patch.text !== undefined) patch.text = clean(patch.text);
+    if (patch.title !== undefined) {
+      patch.title = clean(patch.title);
+      // Clearing the title regenerates it from the text instead of leaving a blank heading.
+      if (!patch.title) {
+        const text = patch.text ?? (await this.get(id))?.text;
+        if (text === undefined) return null;
+        patch.title = defaultTitle(text);
+      }
+    }
     const sets: string[] = [];
     const params: unknown[] = [];
     for (const column of ['title', 'text', 'language'] as const) {
