@@ -1,9 +1,10 @@
 # Render Blueprint: one free Docker web service. Postgres comes from Neon (free) via DATABASE_URL.
 services:
   - type: web
-    name: procucev-stt
+    name: speech-to-text
     runtime: docker
     plan: free
+    region: singapore
     dockerfilePath: ./Dockerfile
     healthCheckPath: /api/health
     envVars:
