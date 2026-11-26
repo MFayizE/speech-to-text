@@ -2,7 +2,8 @@
  * Streams a 16 kHz mono 16-bit WAV file to /ws/transcribe at real-time pace and prints what comes back.
  * Handy for testing providers without a browser or mic.
  *
- *   npx tsx scripts/stream-wav.ts sample.wav [--provider whisper] [--lang hi-IN,en-IN] [--url ws://localhost:8080/ws/transcribe]
+ *   npx tsx scripts/stream-wav.ts sample.wav [--provider whisper] [--lang hi-IN,en-IN] [--tail 1000]
+ *     [--url ws://localhost:8080/ws/transcribe]
  */
 import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
@@ -49,8 +50,9 @@ ws.on('message', async (data) => {
       ws.send(pcm.subarray(i, i + chunk));
       await new Promise((r) => setTimeout(r, 100));
     }
-    // A second of silence, like a speaker pausing, then stop.
-    for (let i = 0; i < 10; i++) {
+    // Trailing silence (default 1 s, like a speaker pausing), then stop. --tail 0 stops mid-speech.
+    const tailChunks = Math.round(Number(flag('tail') ?? 1000) / 100);
+    for (let i = 0; i < tailChunks; i++) {
       ws.send(Buffer.alloc(3200));
       await new Promise((r) => setTimeout(r, 100));
     }

@@ -22,6 +22,8 @@ export class GeminiLiveProvider implements SttProvider {
   async start(options: SttStartOptions, handlers: SttHandlers): Promise<SttSession> {
     let closed = false;
     let turnDone: (() => void) | null = null;
+    // True while the model has shown interim text that has not been finalized yet.
+    let pending = false;
 
     const session: Session = await this.ai.live.connect({
       model: this.model,
@@ -34,9 +36,16 @@ export class GeminiLiveProvider implements SttProvider {
           const content = message.serverContent;
           if (!content) return;
           const interim = content.interimInputTranscription?.text;
-          if (interim) handlers.onPartial(interim);
+          if (interim) {
+            pending = true;
+            handlers.onPartial(interim);
+          }
           const final = content.inputTranscription?.text;
-          if (final) handlers.onFinal(final);
+          if (final) {
+            pending = false;
+            handlers.onFinal(final);
+            turnDone?.();
+          }
           if (content.turnComplete || content.generationComplete) turnDone?.();
         },
         onerror: (e: ErrorEvent) => {
@@ -65,7 +74,9 @@ export class GeminiLiveProvider implements SttProvider {
           turnDone = resolve;
         });
         session.sendRealtimeInput({ audioStreamEnd: true });
-        await Promise.race([flushed, delay(this.finalizeTimeoutMs)]);
+        // The transcribe model does not always send turnComplete. If every interim hypothesis is
+        // already finalized, a short grace period is enough; otherwise wait for the next final.
+        await Promise.race([flushed, delay(pending ? this.finalizeTimeoutMs : 400)]);
       },
       close() {
         if (closed) return;
