@@ -65,6 +65,9 @@ export function handleLiveConnection(ws: WebSocket, _req: IncomingMessage, { rep
   let carry: Buffer | null = null;
   let maxTimer: NodeJS.Timeout | undefined;
   const finals: string[] = [];
+  // Latest interim text not yet covered by a final. Used if the engine never finalizes it
+  // (slow engine timed out, engine died), so the user does not lose what they saw on screen.
+  let lastPartial = '';
 
   const send = (msg: object) => {
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
@@ -85,12 +88,20 @@ export function handleLiveConnection(ws: WebSocket, _req: IncomingMessage, { rep
       const opened = stt.start(
         { languageCodes: codes },
         {
-          onPartial: (text) => send({ type: 'partial', text }),
+          onPartial: (text) => {
+            if (state === 'done') return;
+            lastPartial = text.trim();
+            send({ type: 'partial', text });
+          },
           onFinal: (text) => {
+            if (state === 'done') return;
+            lastPartial = '';
             finals.push(text.trim());
             send({ type: 'final', text });
           },
           onError: (err, fatal) => {
+            // While connecting, a failure surfaces as the start() rejection; reporting it here too would duplicate it.
+            if (state === 'starting' || state === 'done') return;
             fail(err.message, fatal);
             // Nothing more will arrive from a dead engine: end the recording and keep what we have.
             if (fatal && state === 'recording') void stop(true);
@@ -118,8 +129,9 @@ export function handleLiveConnection(ws: WebSocket, _req: IncomingMessage, { rep
       languageCodes = codes;
       state = 'recording';
       maxTimer = setTimeout(() => {
-        const minutes = Math.round((maxSessionMs / 60_000) * 10) / 10;
-        send({ type: 'notice', message: `Recordings are limited to ${minutes} minutes, so this one was stopped and saved.` });
+        const limit =
+          maxSessionMs >= 60_000 ? `${Math.round((maxSessionMs / 60_000) * 10) / 10} minutes` : `${Math.round(maxSessionMs / 1000)} seconds`;
+        send({ type: 'notice', message: `Recordings are limited to ${limit}, so this one was stopped and saved.` });
         void stop(true);
       }, maxSessionMs);
       send({ type: 'ready', provider: stt.name });
@@ -133,6 +145,12 @@ export function handleLiveConnection(ws: WebSocket, _req: IncomingMessage, { rep
   }
 
   async function save(): Promise<void> {
+    if (lastPartial) {
+      // Unfinalized tail: keep it rather than drop it, and show it to the client as final.
+      finals.push(lastPartial);
+      send({ type: 'final', text: lastPartial });
+      lastPartial = '';
+    }
     const text = finals.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
     if (!text) {
       send({ type: 'empty' });
@@ -205,7 +223,7 @@ export function handleLiveConnection(ws: WebSocket, _req: IncomingMessage, { rep
       session = null;
       state = 'done';
       s.close();
-      if (finals.some(Boolean)) void save().catch(() => {});
+      if (finals.some(Boolean) || lastPartial) void save().catch(() => {});
     }
   });
 }

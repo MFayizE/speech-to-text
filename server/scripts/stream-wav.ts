@@ -46,17 +46,26 @@ ws.on('message', async (data) => {
   if (msg.type === 'ready') {
     console.log(`[${t()}] ready (${msg.provider})`);
     const chunk = 3200; // 100 ms
-    for (let i = 0; i < pcm.length; i += chunk) {
+    // --abort-after <ms>: drop the connection mid-stream, like a closed tab.
+    const abortAfter = Number(flag('abort-after') ?? 0);
+    if (abortAfter) {
+      setTimeout(() => {
+        console.log(`[${t()}] aborting connection`);
+        ws.terminate();
+      }, abortAfter);
+    }
+    for (let i = 0; i < pcm.length && ws.readyState === WebSocket.OPEN; i += chunk) {
       ws.send(pcm.subarray(i, i + chunk));
       await new Promise((r) => setTimeout(r, 100));
     }
     // Trailing silence (default 1 s, like a speaker pausing), then stop. --tail 0 stops mid-speech.
     const tailChunks = Math.round(Number(flag('tail') ?? 1000) / 100);
     for (let i = 0; i < tailChunks; i++) {
+      if (ws.readyState !== WebSocket.OPEN) return;
       ws.send(Buffer.alloc(3200));
       await new Promise((r) => setTimeout(r, 100));
     }
-    ws.send(JSON.stringify({ type: 'stop' }));
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }));
   } else if (msg.type === 'partial') {
     console.log(`[${t()}] partial: ${msg.text}`);
   } else if (msg.type === 'final') {

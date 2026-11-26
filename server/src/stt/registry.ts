@@ -34,6 +34,6 @@ export function providersFromConfig(config: AppConfig): ProviderRegistry {
   if (config.geminiApiKey) {
     list.push(new GeminiLiveProvider(config.geminiApiKey, config.geminiModel, config.finalizeTimeoutMs));
   }
-  if (config.whisperUrl) list.push(new WhisperProvider(config.whisperUrl));
+  if (config.whisperUrl) list.push(new WhisperProvider(config.whisperUrl, config.whisperFinalizeTimeoutMs));
   return new ProviderRegistry(list, config.defaultProvider);
 }

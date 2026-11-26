@@ -13,7 +13,7 @@ export class WhisperProvider implements SttProvider {
 
   constructor(
     private readonly url: string,
-    private readonly finalizeTimeoutMs = 15000,
+    private readonly finalizeTimeoutMs = 45_000,
   ) {}
 
   async start(options: SttStartOptions, handlers: SttHandlers): Promise<SttSession> {

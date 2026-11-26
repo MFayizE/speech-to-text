@@ -149,6 +149,22 @@ describe('WebSocket /ws/transcribe', () => {
     ws.close();
   });
 
+  it('reports a connect failure once, even if the engine also signals it', async () => {
+    const noisy: SttProvider = {
+      name: 'noisy',
+      start: async (_, handlers) => {
+        handlers.onError(new Error('closed (1007): API key not valid'), true);
+        throw new Error('API key not valid');
+      },
+    };
+    const { ws, messages, next } = await connect([noisy]);
+    ws.send(JSON.stringify({ type: 'start' }));
+    await next('error');
+    await sleep(100);
+    expect(messages.filter((m) => m.type === 'error')).toEqual([{ type: 'error', message: 'API key not valid' }]);
+    ws.close();
+  });
+
   it('surfaces provider start failures', async () => {
     const broken: SttProvider = {
       name: 'broken',
@@ -212,6 +228,33 @@ describe('WebSocket edge cases', () => {
     expect(err).toMatchObject({ message: 'Gemini Live closed (1011): quota exceeded', fatal: true });
     expect(((await next('saved')).transcription as { text: string }).text).toBe('first sentence');
     expect(p.closed).toBe(1);
+    ws.close();
+  });
+
+  it('saves the last interim text when the engine never finalizes it', async () => {
+    const p = new ScriptedProvider();
+    const { ws, messages, next } = await connect([p]);
+    ws.send(JSON.stringify({ type: 'start' }));
+    await next('ready');
+    p.handlers.onFinal('first part');
+    p.handlers.onPartial('second part was still');
+    p.handlers.onPartial('second part was still interim');
+    await sleep(50);
+    ws.send(JSON.stringify({ type: 'stop' }));
+    expect(((await next('saved')).transcription as { text: string }).text).toBe('first part second part was still interim');
+    expect(messages.filter((m) => m.type === 'final').map((m) => m.text)).toEqual(['first part', 'second part was still interim']);
+    ws.close();
+  });
+
+  it('does not duplicate interim text that was later finalized', async () => {
+    const p = new ScriptedProvider();
+    const { ws, next } = await connect([p]);
+    ws.send(JSON.stringify({ type: 'start' }));
+    await next('ready');
+    p.handlers.onPartial('hello wor');
+    p.handlers.onFinal('hello world');
+    ws.send(JSON.stringify({ type: 'stop' }));
+    expect(((await next('saved')).transcription as { text: string }).text).toBe('hello world');
     ws.close();
   });
 
@@ -279,7 +322,7 @@ describe('WebSocket edge cases', () => {
     ws.send(JSON.stringify({ type: 'start' }));
     await next('ready');
     p.handlers.onFinal('long meeting');
-    expect((await next('notice')).message).toContain('limited to');
+    expect((await next('notice')).message).toBe('Recordings are limited to 0 seconds, so this one was stopped and saved.');
     expect(((await next('saved')).transcription as { text: string }).text).toBe('long meeting');
     ws.close();
   });

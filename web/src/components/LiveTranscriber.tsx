@@ -222,7 +222,7 @@ export function LiveTranscriber({ config, onSaved }: Props) {
         setError((prev) => prev || 'The server did not confirm the save. Check History, then try again if it is missing.');
         finish();
       }
-    }, 20_000);
+    }, 60_000);
   }
 
   async function copy(text: string) {
