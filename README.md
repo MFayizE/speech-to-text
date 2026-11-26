@@ -4,7 +4,8 @@ Speak into the browser and watch the text appear as you talk, including mixed Hi
 ("Kal ki meeting 10 baje hai, please join on time"). Every recording is saved to PostgreSQL, and a
 dashboard lets you search, create, edit, delete and play back (text-to-speech) past transcriptions.
 
-- **Live demo:** _add deployed URL here_
+- **Live demo:** https://speech-to-text-wspe.onrender.com (free tier: the first visit after a quiet period can take up to a minute to wake up)
+- **Source:** https://github.com/MFayizE/speech-to-text
 - **Stack:** Node.js 22 + TypeScript (Express 5, `ws`, `pg`, `zod`), React 19 + Vite, PostgreSQL 16,
   Gemini Live API and a self-hosted faster-whisper service (Python, FastAPI)
 
