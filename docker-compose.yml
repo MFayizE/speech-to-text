@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: stt
+      POSTGRES_PASSWORD: stt
+      POSTGRES_DB: stt
+    ports:
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U stt"]
+      interval: 3s
+      retries: 20
+
+  whisper:
+    build: ./whisper
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+    ports:
+      - "8001:8001"
+    volumes:
+      - whisper-models:/root/.cache/huggingface
+
+  app:
+    build: .
+    profiles: ["app"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://stt:stt@db:5432/stt
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      WHISPER_URL: ws://whisper:8001/ws
+      PORT: 8080
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:
+  whisper-models:
