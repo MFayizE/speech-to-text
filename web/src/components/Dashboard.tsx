@@ -36,7 +36,7 @@ export function Dashboard() {
     try {
       setPage(await api.list({ q: debounced || undefined, limit: PAGE_SIZE, offset }));
     } catch (err) {
-      setError((err as Error).message);
+      setError(`Could not load history: ${(err as Error).message}`);
     } finally {
       setLoading(false);
     }
@@ -70,7 +70,7 @@ export function Dashboard() {
       if (page && page.items.length === 1 && offset > 0) setOffset(offset - PAGE_SIZE);
       else await load();
     } catch (err) {
-      setError((err as Error).message);
+      setError(`Could not delete: ${(err as Error).message}`);
     }
   }
 
@@ -120,7 +120,7 @@ export function Dashboard() {
 
       {error && (
         <div className="notice is-error" role="alert">
-          <span>Could not load history ({error}).</span>
+          <span>{error}</span>
           <button type="button" className="btn btn-quiet" onClick={() => void load()}>
             Try again
           </button>
@@ -186,14 +186,17 @@ export function Dashboard() {
                   submitLabel="Save changes"
                   onCancel={() => setEditingId(null)}
                   onSubmit={async (data) => {
+                    let gone = false;
                     try {
                       await api.update(t.id, data);
                     } catch (err) {
                       if (!isGone(err)) throw err;
-                      setError('That entry no longer exists. It may have been deleted in another tab');
+                      gone = true;
                     }
                     setEditingId(null);
                     await load();
+                    // After the reload, which clears list errors.
+                    if (gone) setError('That entry no longer exists. It may have been deleted in another tab');
                   }}
                 />
               </li>

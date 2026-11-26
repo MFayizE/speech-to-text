@@ -20,7 +20,11 @@ export class WhisperProvider implements SttProvider {
     const ws = new WebSocket(this.url);
     await new Promise<void>((resolve, reject) => {
       ws.once('open', () => resolve());
-      ws.once('error', (err) => reject(new Error(`Cannot reach whisper service at ${this.url}: ${err.message}`)));
+      ws.once('error', (err: Error & { code?: string }) => {
+        // Keep the internal URL in the server log, not in the message shown to users.
+        console.error(`Whisper connect to ${this.url} failed: ${err.code ?? err.message ?? 'unknown error'}`);
+        reject(new Error('Cannot reach the Whisper service. Check that it is running, or pick another engine.'));
+      });
     });
 
     let done: (() => void) | null = null;

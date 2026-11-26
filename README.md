@@ -19,7 +19,7 @@ dashboard lets you search, create, edit, delete and play back (text-to-speech) p
 | Dashboard (CRUD) | Search (title and text), pagination, create manually, edit inline, delete, play back with TTS. |
 | Text to speech | Browser Web Speech API (free, no key). Picks a Hindi voice for Devanagari text. |
 | Responsive UI | Sidebar layout on desktop, top bar + bottom tab bar on phones with the record control in thumb reach. Light and dark themes follow the OS, 44 px touch targets, keyboard focus rings, skip link, reduced-motion support. |
-| Tests | 25 API/WebSocket/unit tests (Vitest + Supertest against real Postgres) and 6 Python tests for the audio segmenter. GitHub Actions runs all of them. |
+| Tests | 49 API/WebSocket/unit tests (Vitest + Supertest against real Postgres, including failure and edge cases) and 6 Python tests for the audio segmenter, run by GitHub Actions. Live test results are in [TESTING.md](TESTING.md). |
 
 ## Architecture
 
@@ -65,6 +65,7 @@ server/            Node + TypeScript API
   migrations/        Plain SQL migrations, applied on boot
   test/              API, WebSocket (mock provider) and unit tests
   scripts/stream-wav.ts  Streams a WAV file through the live pipeline from the CLI
+  scripts/tts-sample.ts  Makes Hindi / Hinglish / English test clips with Gemini TTS
 web/               React + Vite UI
   public/pcm-worklet.js  Mic resampler (runs on the audio thread)
   src/components/        LiveTranscriber, Dashboard
@@ -76,7 +77,7 @@ whisper/           faster-whisper sidecar (FastAPI WebSocket) + segmenter tests
 | | Gemini Live (`gemini-3.5-transcribe-live`) | faster-whisper (self-hosted) |
 | --- | --- | --- |
 | Real time | True streaming, interim hypotheses while speaking | Near real time: re-transcribes the current utterance every ~1 s, finalizes on a 0.7 s pause |
-| Hindi-English mixing | Built-in auto detection and code-switching | Detects one language per utterance; works, but mixed sentences can come out in a single script |
+| Hindi-English mixing | Built-in auto detection and code-switching, verbatim | `base` on CPU renders Hindi as English meaning; `small` needs a GPU to keep up |
 | Cost / hosting | Free tier API key; nothing to host | Open source (MIT); needs CPU and RAM, too heavy for most free app tiers |
 | Privacy | Audio goes to Google (free tier data may be used to improve products) | Audio never leaves your infrastructure |
 | Limits | 10 min per live session (the server stops at 9.5 min and saves) | Bounded by CPU |
@@ -86,9 +87,18 @@ The assignment prefers a self-deployed open-source engine, so both are implement
 uses Gemini because free app tiers (512 MB RAM) cannot run Whisper comfortably. The whisper sidecar can also be
 deployed on its own (see [Deploy](#deploy)) and the app picks it up with one env var.
 
-Whisper notes: the default model is `base` (about real time on 8 CPU cores in Docker). Set `WHISPER_MODEL=small`
-for better Hindi accuracy at roughly 2-3x the latency. A short Hinglish `initial_prompt` nudges Whisper to keep
-romanized Hindi instead of translating it.
+Measured on an 8-core CPU in Docker (full results in [TESTING.md](TESTING.md)):
+
+- **Gemini Live** transcribed every test clip word for word: Hindi in Devanagari, Hinglish as Hinglish, English with
+  numbers. First text in about 1 s, saved within 1 s of stopping.
+- **Whisper `base`** (the default) keeps up with real time and is exact on English. On Hindi and Hinglish it returns
+  an English rendering of the meaning, not a verbatim transcript. Without a prompt it writes Hindi in Urdu script,
+  a known Whisper issue, so the sidecar ships a short Hinglish `initial_prompt`.
+- **Whisper `small`** gives better Devanagari Hindi but runs slower than real time on CPU and falls behind. Use it
+  only with a GPU (`WHISPER_DEVICE=cuda`).
+
+So Gemini is the default engine for code-mixed speech, and Whisper is the self-hosted, no-API option that is
+strongest on English.
 
 ## Run locally
 
@@ -118,7 +128,8 @@ Without a mic, stream a 16 kHz mono WAV through the real pipeline:
 
 ```bash
 cd server
-npm run stream-wav -- sample.wav --provider whisper
+npx tsx scripts/tts-sample.ts hinglish.wav "Kal ki meeting das baje hai, please join on time."
+npm run stream-wav -- hinglish.wav --provider gemini           # add --tail 0 or --abort-after 4000 for edge cases
 ```
 
 ## Tests
@@ -182,7 +193,12 @@ Hugging Face Docker Space (free CPU tier, 16 GB RAM; set `app_port: 8001` in the
 | `GEMINI_MODEL` | `gemini-3.5-transcribe-live` | Live transcription model |
 | `WHISPER_URL` | (empty) | Enables the whisper provider, e.g. `ws://localhost:8001/ws` |
 | `STT_PROVIDER` | first configured | Default engine |
-| `WHISPER_MODEL` (sidecar) | `base` | `tiny`, `base`, `small`, `medium`, ... |
+| `MAX_SESSION_MS` | `570000` (9.5 min) | Recording length cap; the session is stopped and saved |
+| `START_TIMEOUT_MS` | `10000` | Give up if the engine does not accept the session in time |
+| `WHISPER_FINALIZE_TIMEOUT_MS` | `45000` | How long to wait for Whisper to flush after stop |
+| `WHISPER_MODEL` (sidecar) | `base` | `tiny`, `base`, `small`, `medium`, ... (`small`+ needs a GPU for real time) |
+| `WHISPER_INITIAL_PROMPT` (sidecar) | short Hinglish prompt | Decoder style hint; `none` disables it |
+| `WHISPER_MAX_UTTERANCE_S` (sidecar) | `12` | Force-finalize long utterances to bound CPU work |
 
 ## UI design notes
 

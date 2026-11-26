@@ -131,7 +131,7 @@ export function handleLiveConnection(ws: WebSocket, _req: IncomingMessage, { rep
       maxTimer = setTimeout(() => {
         const limit =
           maxSessionMs >= 60_000 ? `${Math.round((maxSessionMs / 60_000) * 10) / 10} minutes` : `${Math.round(maxSessionMs / 1000)} seconds`;
-        send({ type: 'notice', message: `Recordings are limited to ${limit}, so this one was stopped and saved.` });
+        send({ type: 'notice', message: `Recordings are limited to ${limit}, so this one was stopped.` });
         void stop(true);
       }, maxSessionMs);
       send({ type: 'ready', provider: stt.name });

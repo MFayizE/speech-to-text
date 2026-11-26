@@ -176,7 +176,7 @@ export function LiveTranscriber({ config, onSaved }: Props) {
         },
         (rms) => meterRef.current?.push(Math.min(1, rms * 6)),
         () => {
-          showError('The microphone stopped (unplugged or taken by another app). What was captured is being saved.');
+          showError('The microphone stopped (unplugged or taken by another app), so recording ended. Any recognized text is saved to History.');
           void stop();
         },
       );

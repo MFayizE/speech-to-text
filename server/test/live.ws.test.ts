@@ -322,7 +322,7 @@ describe('WebSocket edge cases', () => {
     ws.send(JSON.stringify({ type: 'start' }));
     await next('ready');
     p.handlers.onFinal('long meeting');
-    expect((await next('notice')).message).toBe('Recordings are limited to 0 seconds, so this one was stopped and saved.');
+    expect((await next('notice')).message).toBe('Recordings are limited to 0 seconds, so this one was stopped.');
     expect(((await next('saved')).transcription as { text: string }).text).toBe('long meeting');
     ws.close();
   });
