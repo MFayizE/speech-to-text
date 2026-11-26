@@ -4,10 +4,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { config } from './config.js';
 
+/**
+ * With DATABASE_SSL=true, TLS is configured here rather than via ?sslmode= in the URL, whose meaning
+ * differs between pg versions. The server certificate is verified (hosted Postgres such as Neon uses
+ * publicly trusted certificates); set DATABASE_SSL_INSECURE=true only for self-signed setups.
+ */
 export function createPool(connectionString = config.databaseUrl): pg.Pool {
+  if (!config.databaseSsl) return new pg.Pool({ connectionString, max: 5 });
+  const url = new URL(connectionString);
+  for (const param of ['sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'uselibpqcompat']) url.searchParams.delete(param);
   return new pg.Pool({
-    connectionString,
-    ssl: config.databaseSsl ? { rejectUnauthorized: false } : undefined,
+    connectionString: url.toString(),
+    ssl: { rejectUnauthorized: process.env.DATABASE_SSL_INSECURE !== 'true' },
     max: 5,
   });
 }
