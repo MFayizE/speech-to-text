@@ -1,35 +1,30 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight, LoaderCircle, Mic, Pause, Pencil, Play, Plus, Search, Trash2, X } from 'lucide-react';
 import { api, type Page, type Transcription } from '../api';
+import { clock, count, engineName, fullDate, languageName, when } from '../format';
 import { canSpeak, speak, stopSpeaking } from '../tts';
 
 const PAGE_SIZE = 10;
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-}
-
-function formatDuration(ms: number | null) {
-  if (ms == null) return '';
-  const s = Math.round(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-}
+const ICON = { size: 16, strokeWidth: 1.5, 'aria-hidden': true } as const;
 
 export function Dashboard() {
   const [query, setQuery] = useState('');
   const [debounced, setDebounced] = useState('');
   const [offset, setOffset] = useState(0);
   const [page, setPage] = useState<Page | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
+  const [confirmId, setConfirmId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [speakingId, setSpeakingId] = useState<number | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const t = setTimeout(() => {
       setDebounced(query.trim());
       setOffset(0);
-    }, 300);
+    }, 250);
     return () => clearTimeout(t);
   }, [query]);
 
@@ -52,9 +47,9 @@ export function Dashboard() {
   useEffect(() => () => stopSpeaking(), []);
 
   async function remove(t: Transcription) {
-    if (!confirm(`Delete "${t.title}"? This cannot be undone.`)) return;
     try {
       await api.remove(t.id);
+      setConfirmId(null);
       // Step back a page if this was the last row on it.
       if (page && page.items.length === 1 && offset > 0) setOffset(offset - PAGE_SIZE);
       else await load();
@@ -74,107 +69,226 @@ export function Dashboard() {
   }
 
   const total = page?.total ?? 0;
+  const items = page?.items ?? [];
+  const firstLoad = loading && !page;
 
   return (
-    <section className="card">
-      <div className="toolbar">
-        <input
-          type="search"
-          placeholder="Search title or text"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          aria-label="Search transcriptions"
-        />
-        <button onClick={() => setCreating(true)} disabled={creating}>
-          + New
+    <div className="page">
+      <header className="page-head page-head-row">
+        <div>
+          <h1>History</h1>
+          <p className="lede">
+            {firstLoad ? 'Loading recordings' : debounced ? `${count(total, 'result')} for “${debounced}”` : count(total, 'recording')}
+          </p>
+        </div>
+        <button type="button" className="btn btn-primary" onClick={() => setCreating(true)} disabled={creating}>
+          <Plus {...ICON} />
+          New entry
         </button>
+      </header>
+
+      <div className="toolbar">
+        <div className="search">
+          <Search {...ICON} className="search-icon" />
+          <input
+            ref={searchRef}
+            type="search"
+            placeholder="Search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            aria-label="Search titles and text"
+          />
+          {loading && page && <LoaderCircle {...ICON} className="spin search-busy" />}
+        </div>
       </div>
 
-      {error && <div className="alert">{error}</div>}
-
-      {creating && (
-        <Editor
-          initial={{ title: '', text: '' }}
-          submitLabel="Create"
-          onCancel={() => setCreating(false)}
-          onSubmit={async (data) => {
-            await api.create(data);
-            setCreating(false);
-            if (offset === 0) await load();
-            else setOffset(0);
-          }}
-        />
-      )}
-
-      <div className="summary">
-        {loading ? 'Loading...' : `${total} transcription${total === 1 ? '' : 's'}${debounced ? ` matching "${debounced}"` : ''}`}
-      </div>
-
-      {page && page.items.length === 0 && !loading && (
-        <p className="empty">{debounced ? 'Nothing matches that search.' : 'No transcriptions yet. Record one on the Live tab.'}</p>
-      )}
-
-      <ul className="list">
-        {page?.items.map((t) =>
-          editingId === t.id ? (
-            <li key={t.id}>
-              <Editor
-                initial={{ title: t.title, text: t.text }}
-                submitLabel="Save"
-                onCancel={() => setEditingId(null)}
-                onSubmit={async (data) => {
-                  await api.update(t.id, data);
-                  setEditingId(null);
-                  await load();
-                }}
-              />
-            </li>
-          ) : (
-            <li key={t.id} className="item">
-              <div className="item-head">
-                <h3>{t.title}</h3>
-                <div className="actions">
-                  {canSpeak() && (
-                    <button className="ghost" onClick={() => togglePlay(t)}>
-                      {speakingId === t.id ? 'Stop' : 'Play'}
-                    </button>
-                  )}
-                  <button className="ghost" onClick={() => setEditingId(t.id)}>
-                    Edit
-                  </button>
-                  <button className="ghost danger" onClick={() => remove(t)}>
-                    Delete
-                  </button>
-                </div>
-              </div>
-              <p className="item-text">{t.text}</p>
-              <div className="meta">
-                <span>#{t.id}</span>
-                <span>{formatDate(t.createdAt)}</span>
-                <span className="badge">{t.provider}</span>
-                {t.language && <span className="badge">{t.language}</span>}
-                {t.durationMs != null && <span>{formatDuration(t.durationMs)}</span>}
-                {t.updatedAt !== t.createdAt && <span>edited</span>}
-              </div>
-            </li>
-          ),
-        )}
-      </ul>
-
-      {total > PAGE_SIZE && (
-        <div className="pager">
-          <button className="ghost" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}>
-            ← Prev
-          </button>
-          <span>
-            {offset + 1}-{Math.min(offset + PAGE_SIZE, total)} of {total}
-          </span>
-          <button className="ghost" disabled={offset + PAGE_SIZE >= total} onClick={() => setOffset(offset + PAGE_SIZE)}>
-            Next →
+      {error && (
+        <div className="notice is-error" role="alert">
+          <span>Could not load history ({error}).</span>
+          <button type="button" className="btn btn-quiet" onClick={() => void load()}>
+            Try again
           </button>
         </div>
       )}
-    </section>
+
+      {creating && (
+        <div className="panel create-panel">
+          <h2 className="panel-title">New entry</h2>
+          <Editor
+            initial={{ title: '', text: '' }}
+            submitLabel="Save entry"
+            onCancel={() => setCreating(false)}
+            onSubmit={async (data) => {
+              await api.create(data);
+              setCreating(false);
+              if (offset === 0) await load();
+              else setOffset(0);
+            }}
+          />
+        </div>
+      )}
+
+      {firstLoad ? (
+        <div className="empty">
+          <LoaderCircle {...ICON} className="spin" />
+          <p>Loading</p>
+        </div>
+      ) : items.length === 0 && !error ? (
+        debounced ? (
+          <div className="empty">
+            <p className="empty-title">No results for “{debounced}”</p>
+            <p>Try a different word, or search in the other script (Devanagari or Roman).</p>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => {
+                setQuery('');
+                searchRef.current?.focus();
+              }}
+            >
+              <X {...ICON} />
+              Clear search
+            </button>
+          </div>
+        ) : (
+          <div className="empty">
+            <p className="empty-title">No recordings yet</p>
+            <p>Recordings you save appear here, newest first.</p>
+            <a className="btn btn-primary" href="#/">
+              <Mic {...ICON} />
+              Start recording
+            </a>
+          </div>
+        )
+      ) : (
+        <ul className="rows" aria-busy={loading}>
+          {items.map((t) =>
+            editingId === t.id ? (
+              <li key={t.id} className="row is-editing">
+                <Editor
+                  initial={{ title: t.title, text: t.text }}
+                  submitLabel="Save changes"
+                  onCancel={() => setEditingId(null)}
+                  onSubmit={async (data) => {
+                    await api.update(t.id, data);
+                    setEditingId(null);
+                    await load();
+                  }}
+                />
+              </li>
+            ) : (
+              <li key={t.id} className="row">
+                <div className="row-main">
+                  <h3 className="row-title">{t.title}</h3>
+                  <p className="row-text">{t.text}</p>
+                </div>
+                <dl className="row-meta">
+                  <div>
+                    <dt>Engine</dt>
+                    <dd>{engineName(t.provider)}</dd>
+                  </div>
+                  <div>
+                    <dt>Language</dt>
+                    <dd>{languageName(t.language)}</dd>
+                  </div>
+                  {t.durationMs != null && (
+                    <div>
+                      <dt>Length</dt>
+                      <dd className="num">{clock(t.durationMs)}</dd>
+                    </div>
+                  )}
+                  <div>
+                    <dt>Saved</dt>
+                    <dd>
+                      <time dateTime={t.createdAt} title={fullDate(t.createdAt)}>
+                        {when(t.createdAt)}
+                      </time>
+                      {t.updatedAt !== t.createdAt && <span className="edited">, edited</span>}
+                    </dd>
+                  </div>
+                </dl>
+                <div className="row-actions">
+                  {confirmId === t.id ? (
+                    <div className="confirm" role="group" aria-label={`Delete ${t.title}?`}>
+                      <span>Delete this entry?</span>
+                      <button type="button" className="btn btn-quiet" onClick={() => setConfirmId(null)}>
+                        Keep
+                      </button>
+                      <button type="button" className="btn btn-danger" onClick={() => void remove(t)} autoFocus>
+                        Delete
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      {canSpeak() && (
+                        <button
+                          type="button"
+                          className="icon-btn"
+                          onClick={() => togglePlay(t)}
+                          aria-label={speakingId === t.id ? `Stop playing ${t.title}` : `Play ${t.title}`}
+                          title={speakingId === t.id ? 'Stop' : 'Play'}
+                        >
+                          {speakingId === t.id ? <Pause {...ICON} /> : <Play {...ICON} />}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        onClick={() => {
+                          setConfirmId(null);
+                          setEditingId(t.id);
+                        }}
+                        aria-label={`Edit ${t.title}`}
+                        title="Edit"
+                      >
+                        <Pencil {...ICON} />
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-btn is-danger"
+                        onClick={() => setConfirmId(t.id)}
+                        aria-label={`Delete ${t.title}`}
+                        title="Delete"
+                      >
+                        <Trash2 {...ICON} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </li>
+            ),
+          )}
+        </ul>
+      )}
+
+      {total > PAGE_SIZE && (
+        <nav className="pager" aria-label="Pages">
+          <span className="num">
+            {offset + 1}-{Math.min(offset + PAGE_SIZE, total)} of {total}
+          </span>
+          <div className="btn-row">
+            <button
+              type="button"
+              className="icon-btn"
+              disabled={offset === 0}
+              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+              aria-label="Previous page"
+            >
+              <ChevronLeft {...ICON} />
+            </button>
+            <button
+              type="button"
+              className="icon-btn"
+              disabled={offset + PAGE_SIZE >= total}
+              onClick={() => setOffset(offset + PAGE_SIZE)}
+              aria-label="Next page"
+            >
+              <ChevronRight {...ICON} />
+            </button>
+          </div>
+        </nav>
+      )}
+    </div>
   );
 }
 
@@ -201,20 +315,34 @@ function Editor({ initial, submitLabel, onSubmit, onCancel }: EditorProps) {
         try {
           await onSubmit({ title: title.trim(), text: text.trim() });
         } catch (err) {
-          setError((err as Error).message);
+          setError(`${(err as Error).message}. Fix it and save again.`);
           setSaving(false);
         }
       }}
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onCancel();
+      }}
     >
-      <input placeholder="Title (optional)" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} />
-      <textarea placeholder="Transcription text" value={text} onChange={(e) => setText(e.target.value)} rows={4} required />
-      {error && <div className="alert">{error}</div>}
-      <div className="editor-actions">
-        <button type="button" className="ghost" onClick={onCancel} disabled={saving}>
+      <label className="field">
+        <span className="field-label">Title</span>
+        <input value={title} onChange={(e) => setTitle(e.target.value)} maxLength={200} placeholder="Generated from the text if empty" />
+      </label>
+      <label className="field">
+        <span className="field-label">Text</span>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={4} required autoFocus />
+      </label>
+      {error && (
+        <p className="field-error" role="alert">
+          {error}
+        </p>
+      )}
+      <div className="btn-row btn-row-end">
+        <button type="button" className="btn btn-quiet" onClick={onCancel} disabled={saving}>
           Cancel
         </button>
-        <button type="submit" disabled={saving || !text.trim()}>
-          {saving ? 'Saving...' : submitLabel}
+        <button type="submit" className="btn btn-primary" disabled={saving || !text.trim()}>
+          {saving && <LoaderCircle {...ICON} className="spin" />}
+          {saving ? 'Saving' : submitLabel}
         </button>
       </div>
     </form>

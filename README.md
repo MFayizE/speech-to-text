@@ -18,6 +18,7 @@ dashboard lets you search, create, edit, delete and play back (text-to-speech) p
 | Storage | Each recording is saved with title, text, language, engine and duration. |
 | Dashboard (CRUD) | Search (title and text), pagination, create manually, edit inline, delete, play back with TTS. |
 | Text to speech | Browser Web Speech API (free, no key). Picks a Hindi voice for Devanagari text. |
+| Responsive UI | Sidebar layout on desktop, top bar + bottom tab bar on phones with the record control in thumb reach. Light and dark themes follow the OS, 44 px touch targets, keyboard focus rings, skip link, reduced-motion support. |
 | Tests | 25 API/WebSocket/unit tests (Vitest + Supertest against real Postgres) and 6 Python tests for the audio segmenter. GitHub Actions runs all of them. |
 
 ## Architecture
@@ -182,6 +183,15 @@ Hugging Face Docker Space (free CPU tier, 16 GB RAM; set `app_port: 8001` in the
 | `WHISPER_URL` | (empty) | Enables the whisper provider, e.g. `ws://localhost:8001/ws` |
 | `STT_PROVIDER` | first configured | Default engine |
 | `WHISPER_MODEL` (sidecar) | `base` | `tiny`, `base`, `small`, `medium`, ... |
+
+## UI design notes
+
+- One warm graphite neutral ramp with three text roles; ink for primary actions, red only for "recording" and destructive actions.
+- Geist and Geist Mono (self-hosted via Fontsource) with Noto Sans Devanagari as the Hindi fallback; mono only for timecodes and figures.
+- The transcript reads like a document: finalized words settle from muted to ink, the in-progress hypothesis stays muted.
+- The input level strip is written straight to element styles, so the mic never triggers React re-renders.
+- Motion is limited to color, opacity and a 0.97 press scale on one ease-out curve; hover effects only on fine pointers.
+- Delete asks for confirmation inline instead of a blocking browser dialog.
 
 ## Limitations and next steps
 

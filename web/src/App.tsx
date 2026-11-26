@@ -1,60 +1,112 @@
 import { useEffect, useState } from 'react';
+import { History, Mic } from 'lucide-react';
 import { api, type AppConfig } from './api';
 import { Dashboard } from './components/Dashboard';
 import { LiveTranscriber } from './components/LiveTranscriber';
+import { engineName } from './format';
 
-type Tab = 'live' | 'history';
+type Route = 'record' | 'history';
+
+function readRoute(): Route {
+  return location.hash === '#/history' ? 'history' : 'record';
+}
+
+/** Tiny hash router: keeps the page on refresh and works on any static host. */
+function useRoute(): Route {
+  const [route, setRoute] = useState<Route>(readRoute);
+  useEffect(() => {
+    const onHash = () => setRoute(readRoute());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+  return route;
+}
+
+const NAV: { route: Route; href: string; label: string; Icon: typeof Mic }[] = [
+  { route: 'record', href: '#/', label: 'Record', Icon: Mic },
+  { route: 'history', href: '#/history', label: 'History', Icon: History },
+];
 
 export function App() {
-  const [tab, setTab] = useState<Tab>('live');
+  const route = useRoute();
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [configError, setConfigError] = useState('');
-  // Bumped after each saved recording so the dashboard reloads when opened.
+  // Bumped after each saved recording so History refetches when opened.
   const [savedCount, setSavedCount] = useState(0);
 
   useEffect(() => {
     api.config().then(setConfig, (err: Error) => setConfigError(err.message));
   }, []);
 
+  useEffect(() => {
+    document.title = route === 'history' ? 'History · Transcribe' : 'Record · Transcribe';
+  }, [route]);
+
+  const nav = (
+    <ul className="nav-list">
+      {NAV.map(({ route: r, href, label, Icon }) => (
+        <li key={r}>
+          <a href={href} className="nav-item" aria-current={route === r ? 'page' : undefined}>
+            <Icon size={18} strokeWidth={1.5} aria-hidden />
+            <span>{label}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+
   return (
     <div className="shell">
-      <header className="topbar">
-        <div className="brand">
-          <span className="logo" aria-hidden>
-            ◉
-          </span>
-          <div>
-            <h1>Speech to Text</h1>
-            <p>Real-time Hindi + English transcription</p>
-          </div>
+      <a className="skip-link" href="#main">
+        Skip to content
+      </a>
+
+      <aside className="sidebar">
+        <div className="wordmark">
+          <span className="wordmark-dot" aria-hidden />
+          Transcribe
         </div>
-        <nav className="tabs" role="tablist">
-          <button role="tab" aria-selected={tab === 'live'} className={tab === 'live' ? 'active' : ''} onClick={() => setTab('live')}>
-            Live
-          </button>
-          <button
-            role="tab"
-            aria-selected={tab === 'history'}
-            className={tab === 'history' ? 'active' : ''}
-            onClick={() => setTab('history')}
-          >
-            History
-          </button>
-        </nav>
+        <nav aria-label="Main">{nav}</nav>
+        <div className="sidebar-foot">
+          <span className="label">Engines</span>
+          {config?.providers.length ? (
+            <ul className="engine-list">
+              {config.providers.map((p) => (
+                <li key={p}>
+                  <span className="status-dot is-on" aria-hidden />
+                  {engineName(p)}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <span className="muted">{config ? 'None configured' : 'Checking'}</span>
+          )}
+        </div>
+      </aside>
+
+      <header className="topbar">
+        <div className="wordmark">
+          <span className="wordmark-dot" aria-hidden />
+          Transcribe
+        </div>
       </header>
 
-      <main>
-        {configError && <div className="alert">Cannot reach the server: {configError}</div>}
-        {/* Live stays mounted so an in-progress recording survives a tab switch. */}
-        <div hidden={tab !== 'live'}>
-          <LiveTranscriber config={config} onSaved={() => setSavedCount((n) => n + 1)} onOpenHistory={() => setTab('history')} />
+      <main id="main" className="main" tabIndex={-1}>
+        {configError && (
+          <div className="notice is-error" role="alert">
+            Cannot reach the server ({configError}). Check that the API is running, then reload the page.
+          </div>
+        )}
+        {/* Record stays mounted so a recording in progress survives switching pages. */}
+        <div hidden={route !== 'record'}>
+          <LiveTranscriber config={config} onSaved={() => setSavedCount((n) => n + 1)} />
         </div>
-        {tab === 'history' && <Dashboard key={savedCount} />}
+        {route === 'history' && <Dashboard key={savedCount} />}
       </main>
 
-      <footer className="foot">
-        Speech to text via Gemini Live or self-hosted faster-whisper. Playback uses the browser's built-in speech synthesis.
-      </footer>
+      <nav className="tabbar" aria-label="Main">
+        {nav}
+      </nav>
     </div>
   );
 }

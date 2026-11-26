@@ -1,29 +1,45 @@
 import { useEffect, useRef, useState } from 'react';
+import { Check, Copy, Mic, Pause, Play, Square } from 'lucide-react';
 import { liveSocketUrl, type AppConfig, type Transcription } from '../api';
 import { startMic, type MicRecorder } from '../audio/recorder';
+import { clock, engineName, wordCount } from '../format';
 import { canSpeak, speak, stopSpeaking } from '../tts';
+import { LevelMeter, type LevelMeterHandle } from './LevelMeter';
 
 type Status = 'idle' | 'connecting' | 'recording' | 'finishing';
 
-const LANGUAGE_OPTIONS: { label: string; codes: string[] }[] = [
-  { label: 'Auto detect (mixed Hindi + English)', codes: [] },
-  { label: 'Hindi + English hint', codes: ['hi-IN', 'en-IN'] },
+const LANGUAGES: { label: string; codes: string[] }[] = [
+  { label: 'Auto, mixed Hindi and English', codes: [] },
+  { label: 'Hindi and English', codes: ['hi-IN', 'en-IN'] },
   { label: 'Hindi', codes: ['hi-IN'] },
   { label: 'English (India)', codes: ['en-IN'] },
 ];
 
-const PROVIDER_LABELS: Record<string, string> = {
-  gemini: 'Gemini Live (cloud, streaming)',
-  whisper: 'faster-whisper (self-hosted, open source)',
+const ENGINE_DETAIL: Record<string, string> = {
+  gemini: 'Gemini Live, streaming',
+  whisper: 'Whisper, self-hosted',
+};
+
+const STATUS_LABEL: Record<Status, string> = {
+  idle: 'Ready',
+  connecting: 'Connecting',
+  recording: 'Listening',
+  finishing: 'Saving',
 };
 
 interface Props {
   config: AppConfig | null;
   onSaved: (t: Transcription) => void;
-  onOpenHistory: () => void;
 }
 
-export function LiveTranscriber({ config, onSaved, onOpenHistory }: Props) {
+function micErrorMessage(err: unknown): string {
+  const name = err instanceof DOMException ? err.name : '';
+  if (name === 'NotAllowedError') return 'Microphone access is blocked. Allow it from the icon in the address bar, then try again.';
+  if (name === 'NotFoundError') return 'No microphone found. Connect one, then try again.';
+  return err instanceof Error ? err.message : 'Could not start the microphone.';
+}
+
+export function LiveTranscriber({ config, onSaved }: Props) {
   const [status, setStatus] = useState<Status>('idle');
   const [provider, setProvider] = useState('');
   const [languageIndex, setLanguageIndex] = useState(0);
@@ -31,12 +47,13 @@ export function LiveTranscriber({ config, onSaved, onOpenHistory }: Props) {
   const [partial, setPartial] = useState('');
   const [error, setError] = useState('');
   const [saved, setSaved] = useState<Transcription | null>(null);
-  const [level, setLevel] = useState(0);
   const [elapsed, setElapsed] = useState(0);
   const [speaking, setSpeaking] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const micRef = useRef<MicRecorder | null>(null);
+  const meterRef = useRef<LevelMeterHandle>(null);
   const startedAt = useRef(0);
 
   useEffect(() => {
@@ -49,17 +66,32 @@ export function LiveTranscriber({ config, onSaved, onOpenHistory }: Props) {
     return () => clearInterval(timer);
   }, [status]);
 
-  useEffect(() => () => cleanup(), []);
+  useEffect(
+    () => () => {
+      void micRef.current?.stop();
+      wsRef.current?.close();
+      stopSpeaking();
+    },
+    [],
+  );
 
   function cleanup() {
     void micRef.current?.stop();
     micRef.current = null;
     wsRef.current?.close();
     wsRef.current = null;
-    setLevel(0);
+    meterRef.current?.reset();
+  }
+
+  function finish() {
+    cleanup();
+    setStatus('idle');
+    setPartial('');
   }
 
   async function start() {
+    stopSpeaking();
+    setSpeaking(false);
     setError('');
     setSaved(null);
     setFinals([]);
@@ -70,7 +102,7 @@ export function LiveTranscriber({ config, onSaved, onOpenHistory }: Props) {
     const ws = new WebSocket(liveSocketUrl());
     ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
-    // Audio captured before the provider is ready is queued, so the first words are not lost.
+    // Audio captured before the engine is ready is queued, so the first words are not lost.
     const queue: ArrayBuffer[] = [];
     let ready = false;
 
@@ -96,12 +128,11 @@ export function LiveTranscriber({ config, onSaved, onOpenHistory }: Props) {
           finish();
           break;
         case 'empty':
-          setError('No speech was recognized. Check your mic and try again.');
+          setError('No speech was detected. Check that the right microphone is selected, then try again.');
           finish();
           break;
         case 'error':
           setError(msg.message);
-          // Errors during start or recording end the session; errors while finishing are shown but we still wait for "saved".
           if (!ready) finish();
           break;
       }
@@ -109,7 +140,7 @@ export function LiveTranscriber({ config, onSaved, onOpenHistory }: Props) {
     ws.onclose = () => {
       if (wsRef.current === ws) finish();
     };
-    ws.onerror = () => setError('Lost connection to the server.');
+    ws.onerror = () => setError('Lost the connection to the server. Check your network, then start again.');
 
     try {
       micRef.current = await startMic(
@@ -117,15 +148,15 @@ export function LiveTranscriber({ config, onSaved, onOpenHistory }: Props) {
           if (ready && ws.readyState === WebSocket.OPEN) ws.send(pcm);
           else queue.push(pcm);
         },
-        (rms) => setLevel(Math.min(1, rms * 6)),
+        (rms) => meterRef.current?.push(Math.min(1, rms * 6)),
       );
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Microphone permission denied.');
+      setError(micErrorMessage(err));
       finish();
       return;
     }
 
-    const codes = LANGUAGE_OPTIONS[languageIndex].codes;
+    const codes = LANGUAGES[languageIndex].codes;
     const sendStart = () => ws.send(JSON.stringify({ type: 'start', provider: provider || undefined, languageCodes: codes }));
     if (ws.readyState === WebSocket.OPEN) sendStart();
     else ws.addEventListener('open', sendStart, { once: true });
@@ -135,108 +166,177 @@ export function LiveTranscriber({ config, onSaved, onOpenHistory }: Props) {
     setStatus('finishing');
     await micRef.current?.stop();
     micRef.current = null;
-    setLevel(0);
+    meterRef.current?.reset();
     const ws = wsRef.current;
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }));
     else finish();
   }
 
-  function finish() {
-    cleanup();
-    setStatus('idle');
-    setPartial('');
+  async function copy(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setError('Could not copy. Select the text and copy it manually.');
+    }
   }
 
   const transcript = finals.join(' ');
   const busy = status !== 'idle';
-  const noProviders = config !== null && config.providers.length === 0;
-  const seconds = Math.floor(elapsed / 1000);
+  const noEngines = config !== null && config.providers.length === 0;
+  const canStart = !!config && !noEngines;
+  const words = wordCount(`${transcript} ${partial}`);
+  const engine = provider || config?.defaultProvider || '';
 
   return (
-    <section className="card live">
-      <div className="controls">
-        <label>
-          <span>Engine</span>
-          <select value={provider} onChange={(e) => setProvider(e.target.value)} disabled={busy || !config?.providers.length}>
-            {config?.providers.map((p) => (
-              <option key={p} value={p}>
-                {PROVIDER_LABELS[p] ?? p}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          <span>Language</span>
-          <select value={languageIndex} onChange={(e) => setLanguageIndex(Number(e.target.value))} disabled={busy}>
-            {LANGUAGE_OPTIONS.map((o, i) => (
-              <option key={o.label} value={i}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+    <div className="page">
+      <header className="page-head">
+        <h1>Record</h1>
+        <p className="lede">Speak in Hindi, English or both. Words appear as you talk and are saved when you stop.</p>
+      </header>
 
-      <div className="recorder">
-        <button
-          className={`mic ${status}`}
-          onClick={status === 'recording' ? stop : start}
-          disabled={status === 'connecting' || status === 'finishing' || noProviders || !config}
-          aria-label={status === 'recording' ? 'Stop recording' : 'Start recording'}
-          style={{ ['--level' as string]: level }}
-        >
-          <span className="mic-icon" aria-hidden>
-            {status === 'recording' ? '■' : '●'}
-          </span>
-        </button>
-        <div className="recorder-status" aria-live="polite">
-          {status === 'idle' && (noProviders ? 'No speech engine configured on the server' : 'Tap to start speaking')}
-          {status === 'connecting' && 'Connecting...'}
-          {status === 'recording' && (
-            <>
-              <span className="dot" /> Listening {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, '0')}
-            </>
+      <div className="record-layout">
+        <section className="sheet" aria-labelledby="transcript-label">
+          <div className="sheet-head">
+            <span id="transcript-label" className={`state state-${status}`}>
+              <span className="state-dot" aria-hidden />
+              {STATUS_LABEL[status]}
+            </span>
+            <span className="timecode" aria-label="Elapsed time">
+              {clock(elapsed)}
+            </span>
+          </div>
+
+          <div className="sheet-body" aria-live="polite" aria-atomic="false">
+            {transcript || partial ? (
+              <p className="transcript">
+                {finals.map((text, i) => (
+                  <span key={i} className="seg">
+                    {text}{' '}
+                  </span>
+                ))}
+                {partial && <span className="seg-partial">{partial}</span>}
+              </p>
+            ) : (
+              <p className="transcript-empty">
+                {noEngines
+                  ? 'No speech engine is configured on the server. Set GEMINI_API_KEY or WHISPER_URL and restart it.'
+                  : 'Try saying: “Kal ki meeting 10 baje hai, please join on time.”'}
+              </p>
+            )}
+          </div>
+
+          {error && (
+            <div className="notice is-error" role="alert">
+              {error}
+            </div>
           )}
-          {status === 'finishing' && 'Finishing and saving...'}
-        </div>
-      </div>
 
-      <div className="transcript" aria-live="polite">
-        {transcript || partial ? (
-          <p>
-            {transcript} <span className="partial">{partial}</span>
-          </p>
-        ) : (
-          <p className="placeholder">Your words appear here as you speak. Try: "Kal ki meeting 10 baje hai, please join on time."</p>
-        )}
-      </div>
-
-      {error && <div className="alert">{error}</div>}
-
-      {saved && (
-        <div className="saved">
-          <span>Saved as #{saved.id}</span>
-          {canSpeak() && (
+          <div className="sheet-foot">
             <button
-              className="ghost"
-              onClick={() => {
-                if (speaking) {
-                  stopSpeaking();
-                  setSpeaking(false);
-                } else {
-                  setSpeaking(true);
-                  speak(saved.text, () => setSpeaking(false));
-                }
-              }}
+              type="button"
+              className={`record-btn${status === 'recording' ? ' is-recording' : ''}`}
+              onClick={status === 'recording' ? stop : start}
+              disabled={!canStart || status === 'connecting' || status === 'finishing'}
             >
-              {speaking ? 'Stop' : 'Play back'}
+              {status === 'recording' ? (
+                <Square size={16} strokeWidth={1.5} fill="currentColor" aria-hidden />
+              ) : (
+                <Mic size={18} strokeWidth={1.5} aria-hidden />
+              )}
+              <span>
+                {status === 'recording' ? 'Stop and save' : status === 'finishing' ? 'Saving' : status === 'connecting' ? 'Connecting' : 'Start recording'}
+              </span>
             </button>
-          )}
-          <button className="ghost" onClick={onOpenHistory}>
-            View history
-          </button>
-        </div>
-      )}
-    </section>
+            <LevelMeter ref={meterRef} active={status === 'recording'} />
+          </div>
+        </section>
+
+        <aside className="side">
+          <section className="panel" aria-labelledby="settings-label">
+            <h2 id="settings-label" className="panel-title">
+              Settings
+            </h2>
+            <label className="field">
+              <span className="field-label">Engine</span>
+              <select value={provider} onChange={(e) => setProvider(e.target.value)} disabled={busy || !config?.providers.length}>
+                {!config?.providers.length && <option value="">{config ? 'None configured' : 'Loading'}</option>}
+                {config?.providers.map((p) => (
+                  <option key={p} value={p}>
+                    {ENGINE_DETAIL[p] ?? p}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-label">Language</span>
+              <select value={languageIndex} onChange={(e) => setLanguageIndex(Number(e.target.value))} disabled={busy}>
+                {LANGUAGES.map((o, i) => (
+                  <option key={o.label} value={i}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </section>
+
+          <section className="panel" aria-labelledby="session-label">
+            <h2 id="session-label" className="panel-title">
+              This session
+            </h2>
+            <dl className="facts">
+              <div>
+                <dt>Duration</dt>
+                <dd>{clock(saved?.durationMs ?? elapsed)}</dd>
+              </div>
+              <div>
+                <dt>Words</dt>
+                <dd>{saved ? wordCount(saved.text) : words}</dd>
+              </div>
+              <div>
+                <dt>Engine</dt>
+                <dd>{engine ? engineName(engine) : '-'}</dd>
+              </div>
+            </dl>
+
+            {saved && (
+              <div className="saved">
+                <p className="saved-line">
+                  <Check size={16} strokeWidth={1.5} aria-hidden /> Saved to history as #{saved.id}
+                </p>
+                <div className="btn-row">
+                  {canSpeak() && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => {
+                        if (speaking) {
+                          stopSpeaking();
+                          setSpeaking(false);
+                        } else {
+                          setSpeaking(true);
+                          speak(saved.text, () => setSpeaking(false));
+                        }
+                      }}
+                    >
+                      {speaking ? <Pause size={16} strokeWidth={1.5} aria-hidden /> : <Play size={16} strokeWidth={1.5} aria-hidden />}
+                      {speaking ? 'Stop playback' : 'Play back'}
+                    </button>
+                  )}
+                  <button type="button" className="btn" onClick={() => copy(saved.text)}>
+                    {copied ? <Check size={16} strokeWidth={1.5} aria-hidden /> : <Copy size={16} strokeWidth={1.5} aria-hidden />}
+                    {copied ? 'Copied' : 'Copy text'}
+                  </button>
+                  <a className="btn btn-quiet" href="#/history">
+                    Open history
+                  </a>
+                </div>
+              </div>
+            )}
+          </section>
+        </aside>
+      </div>
+    </div>
   );
 }
