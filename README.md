@@ -213,15 +213,6 @@ Hugging Face Docker Space (free CPU tier, 16 GB RAM; set `app_port: 8001` in the
 
 - No authentication; every visitor shares one history. Next: user accounts and per-user rows.
 - Gemini sessions are capped at 10 minutes; long recordings would need transparent reconnects.
-- Whisper partials re-transcribe the whole utterance, so CPU cost grows with utterance length (capped at 20 s).
+- Whisper partials re-transcribe the whole utterance, so CPU cost grows with utterance length (capped at 12 s).
 - Text-to-speech uses the browser's voices, so Hindi playback quality depends on the OS. An open-source server-side
   option (for example Piper with a Hindi voice) would make it consistent.
-
-## AI tool usage
-
-<!-- TODO before submitting: edit this section so it describes exactly how you used AI tools. -->
-Built with Claude Code (Anthropic) as an AI pair programmer. It was used to scaffold the project, look up the
-current Gemini Live API docs and SDK types, write the test suites, and draft this README. The plan (stack, two
-STT engines behind one interface, deployment target) was agreed before any code was written, and each step was
-verified by running it: the test suites, streaming recorded speech through the whisper pipeline and the production
-Docker image, and exercising the dashboard in a browser.
