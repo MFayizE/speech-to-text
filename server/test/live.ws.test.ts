@@ -85,7 +85,7 @@ describe('WebSocket /ws/transcribe', () => {
     ws.close();
   });
 
-  it('sends "empty" and saves nothing when no speech was recognised', async () => {
+  it('sends "empty" and saves nothing when no speech was recognized', async () => {
     const { ws, next } = await connect([new MockProvider([])]);
     ws.send(JSON.stringify({ type: 'start' }));
     await next('ready');
